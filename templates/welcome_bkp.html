@@ -1,0 +1,83 @@
+{% extends "layout.html" %}
+{% block body %}
+    <style>
+.jumbotron
+{
+    display:none;
+}
+html,body { height: 100%; margin: 0px; padding: 0px; }
+#result {  overflow-y: scroll;clear:both;background-color:#eaeaea;
+height: -moz-calc(100% - 109px); /* Firefox */
+ height: -webkit-calc(100% - 109px); /* Chrome, Safari */
+  height: calc(100% - 109px); /* IE9+ and future browsers */
+
+}
+        </style>
+<div class="col-xs-12" style="padding:0px;height:100%;">
+
+        <div class="dropdown" style="float:left">
+        <button class="btn btn-default dropdown-toggle" type="button" id="dropdownMenu1" data-toggle="dropdown" aria-haspopup="true" aria-expanded="true">
+         <span style="text-transform: capitalize;">{{username}}</span>
+         <span class="caret"></span>
+        </button>
+        <ul class="dropdown-menu" aria-labelledby="dropdownMenu1">
+         <li><a href="{{url_for('logout')}}">Log Out</a></li>
+        </ul>
+        </div>
+        <a href=# id=load_prev><button type="button" class="btn btn-default" aria-label="Left Align" style="float:right">
+        <span class="glyphicon glyphicon-upload" aria-hidden="true"></span> Load previous messages
+        </button></a>
+   <div id=result>{{init_prev_chats|safe}}</div>
+   <div style="position: fixed;bottom: 0;width:100%">
+   <div class="col-xs-10" style="padding:0px;"><textarea class="form-control" rows=3  name=textfeed></textarea></div>
+   <div class="col-xs-2" style="padding:0px;"><a href=# id=calculate><button type="button" class="btn btn-default btn-lg btn-block" style="line-height: 2.9;"><span class="glyphicon glyphicon-send" aria-hidden="true"></span></button></a></div>
+   </div>
+   <script>
+$SCRIPT_ROOT = {{ request.script_root|tojson|safe }};
+$("a#load_prev").bind('click', function(){
+    $.ajax({url: $SCRIPT_ROOT + '/_load_prev_msgs', success: function(result){
+        var prevHeight = $('#result').prop("scrollHeight");
+        $("#result").prepend(result);
+        var currHeight = $('#result').prop("scrollHeight");
+        var needHeight = currHeight-prevHeight
+        $("#result").scrollTop(needHeight);
+
+    }});
+});
+
+   $('#result').bind('contentchanged', function() {
+  // do something after the div content has changed
+  $('#result').animate({scrollTop: $('#result').prop("scrollHeight")});
+    });
+
+
+$('#result').trigger('contentchanged');
+
+
+
+$(function() {
+
+    $('a#calculate').bind('click', function() {
+
+      $.getJSON($SCRIPT_ROOT + '/_send', {
+        textfeed: $('textarea[name="textfeed"]').val().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#x27;').replace(/\//g, '&#x2F;').replace(/(?:\r\n|\r|\n)/g, '<br />')
+      }, function(data) {
+        $("#result").append(data.result);
+        $('#result').animate({scrollTop: $('#result').prop("scrollHeight")});
+      });
+
+      $('textarea[name="textfeed"]').val('');
+    });
+  });
+
+var source = new EventSource('/_receive');
+    source.onmessage = function(event) {
+
+        $("#result").append(event.data);
+        $('#result').animate({scrollTop: $('#result').prop("scrollHeight")});
+
+    };
+</script>
+</div>
+
+{% endblock %}

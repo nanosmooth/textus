@@ -1,0 +1,197 @@
+from flask import Flask, jsonify, request, session, g, redirect, url_for, \
+     abort, render_template, flash, Response
+from flask.ext.socketio import SocketIO,emit
+import subprocess
+import calendar, time
+from time import gmtime, strftime
+
+globalmc=0
+import sqlite3
+import os.path
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+db_path = os.path.join(BASE_DIR, "test.db")
+
+print db_path
+
+app = Flask(__name__)
+socketio=SocketIO(app)
+app.config['DEBUG'] = True
+app.config['SESSION_TYPE'] = 'filesystem'
+app.secret_key = 'tihishastobeaC!0n%^$@<>;;;}}}:)'
+
+def writeToLoggedIn( str ):
+  htmlstr=str.replace('\n','<br />')
+  print htmlstr
+  print db_path
+  utc_sec_since_epoch=calendar.timegm(time.gmtime())
+  utc_sec_since_epoch=utc_sec_since_epoch+19800
+  post_time=strftime("%I:%M %p %a %d-%b-%Y", gmtime(utc_sec_since_epoch))
+  conn = sqlite3.connect(db_path)
+  conn.execute("INSERT INTO MESSAGES (NAME,TEXT,ROU,POSTTIME) \
+      VALUES (?,?,?,?)",(session['username'],htmlstr,','+session['username']+',',post_time));
+  conn.commit()
+  conn.close()
+
+
+
+@app.route('/')
+def index():
+ if not session.get('logged_in'):
+  return redirect(url_for('login'))
+ else:
+  return redirect(url_for('welcome'))
+
+@app.route('/welcome', methods=['GET', 'POST'])
+def welcome():
+ session['prev']=50
+ if not session.get('logged_in'):
+    return redirect(url_for('index'))
+ else:
+    conn = sqlite3.connect(db_path)
+    msgarr=[]
+    tot_rows=conn.execute('SELECT count(*) FROM messages').fetchone()[0]
+    sql="SELECT * FROM MESSAGES WHERE ROU like '%%,%s,%%' or NAME='%s' LIMIT 50 OFFSET %d-50" % (session.get('username'),session.get('username'),tot_rows)
+    cursor=conn.execute(sql);
+
+    for row in cursor:
+        if row[3] is None:
+            post_time='Few days back'
+        else:
+            post_time=row[3]
+        if row[0] == session.get('username'):
+            msg='<div style="float:right;padding:7px;margin:3px 8px 3px 0px;background-color:#BEE1FF;clear:both;max-width:290px;border-radius: 10px;border-bottom: 1px solid #61B6FF;word-wrap: break-word">'+'<div style="color: #82C4FD;    font-size: small;    font-family: serif;">'+row[0]+'</div>'+row[1]+'<div style="color: #82C4FD;    font-size: small;    font-family: serif;">'+post_time+'</div></div>'
+        else:
+            msg='<div style="float:left;padding:7px;margin:3px 0px 3px 8px;background-color:#FEFEFE;clear:both;max-width:290px;border-radius: 10px;border-bottom: 1px solid #BEBEBE;word-wrap: break-word">'+'<div style="color: #BBBBBB;    font-size: small;    font-family: serif;">'+row[0]+'</div>'+row[1]+'<div style="color: #BBBBBB;    font-size: small;    font-family: serif;">'+post_time+'</div></div>'
+        msgarr.append(msg)
+    prev_read_chats = ''.join(msgarr)
+
+    return render_template('welcome.html',title='TextMe',page_title='TextMe',username=session.get('username'),init_prev_chats=prev_read_chats)
+
+
+
+
+
+@app.route('/_add_numbers')
+def add_numbers():
+    a = request.args.get('a', 0, type=int)
+    b = request.args.get('b', 0, type=int)
+    return jsonify(result=a + b)
+
+@app.route('/_send')
+def send():
+    toPut = request.args.get('textfeed')
+    print toPut
+    writeToLoggedIn(toPut)
+    utc_sec_since_epoch=calendar.timegm(time.gmtime())
+    utc_sec_since_epoch=utc_sec_since_epoch+19800
+    post_time=strftime("%I:%M %p %a %d-%b-%Y", gmtime(utc_sec_since_epoch))
+    toPut = '<div style="float:right;padding:7px;margin:3px 8px 3px 0px;background-color:#BEE1FF;clear:both;max-width:290px;border-radius: 10px;border-bottom: 1px solid #61B6FF;word-wrap: break-word">'+'<div style="color: #82C4FD;    font-size: small;    font-family: serif;">'+session.get('username')+'</div>'+toPut+'<div style="color: #82C4FD;    font-size: small;    font-family: serif;">'+post_time+'</div></div>'
+    return jsonify(result=toPut)
+
+@app.route('/_receive')
+def receive():
+
+   msgarr=[]
+   conn = sqlite3.connect(db_path)
+   sql="SELECT * FROM MESSAGES WHERE ROU not like '%%%s%%' and NAME!='%s'" % (session.get('username'),session.get('username'))
+   cursor=conn.execute(sql);
+   for row in cursor:
+       msg='<div style="float:left;padding:7px;margin:3px 0px 3px 8px;background-color:#FEFEFE;clear:both;max-width:290px;border-radius: 10px;border-bottom: 1px solid #BEBEBE;word-wrap: break-word">'+'<div style="color: #BBBBBB;    font-size: small;    font-family: serif;">'+row[0]+'</div>'+row[1]+'<div style="color: #BBBBBB;    font-size: small;    font-family: serif;">'+row[3]+'</div></div>'
+       msgarr.append(msg)
+       sql="UPDATE MESSAGES SET ROU=ROU||',%s,' where TEXT='%s' and NAME!='%s'" % (session.get('username'),row[1],session.get('username'))
+       conn.execute(sql);
+   conn.commit()
+   conn.close()
+
+   def eventStream():
+       str1 = ''.join(msgarr)
+       strlength = len(str1)
+       if strlength > 0:
+           yield "data: {}\n\n".format(str1)
+
+
+   return Response(eventStream(), mimetype="text/event-stream")
+
+@app.route('/_load_prev_msgs')
+def load_prev_msgs():
+    conn = sqlite3.connect(db_path)
+    msgarr=[]
+    tot_rows=conn.execute('SELECT count(*) FROM messages').fetchone()[0]
+    session['prev']=50+session.get('prev')
+    session['offset_val']=50+session.get('prev')
+    if int(session.get('offset_val'))-50 > int(tot_rows):
+        print 'it was greater'
+        return '<div style="display:none;"></div>'
+    sql="SELECT * FROM MESSAGES WHERE ROU not like ',%s,' or NAME='%s' LIMIT 50 OFFSET %d-%d" % (session.get('username'),session.get('username'),tot_rows,session.get('offset_val'))
+    print session.get('offset_val')
+    cursor=conn.execute(sql)
+    prev_read_chats=None
+    for row in cursor:
+        if row[3] is None:
+            post_time='Few days back'
+        else:
+            post_time=row[3]
+        if row[0] == session.get('username'):
+            msg='<div style="float:right;padding:7px;margin:3px 8px 3px 0px;background-color:#BEE1FF;clear:both;max-width:290px;border-radius: 10px;border-bottom: 1px solid #61B6FF;word-wrap: break-word">'+'<div style="color: #82C4FD;    font-size: small;    font-family: serif;">'+row[0]+'</div>'+row[1]+'<div style="color: #82C4FD;    font-size: small;    font-family: serif;">'+post_time+'</div></div>'
+        else:
+            msg='<div style="float:left;padding:7px;margin:3px 0px 3px 8px;background-color:#FEFEFE;clear:both;max-width:290px;border-radius: 10px;border-bottom: 1px solid #BEBEBE;word-wrap: break-word">'+'<div style="color: #BBBBBB;    font-size: small;    font-family: serif;">'+row[0]+'</div>'+row[1]+'<div style="color: #BBBBBB;    font-size: small;    font-family: serif;">'+post_time+'</div></div>'
+        msgarr.append(msg)
+    prev_read_chats = ''.join(msgarr)
+    return prev_read_chats
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    error = None
+    print(request.method)
+    if request.method == 'POST':
+
+
+
+        if request.form['inputUsername'] == 'tjs':
+
+            app_pass = 'defaulttjscon'
+        elif request.form['inputUsername'] == 'mnk':
+
+            app_pass = 'defaultmnkcon'
+        elif request.form['inputUsername'] == 'bnu':
+
+            app_pass = 'defaultbnucon'
+        elif request.form['inputUsername'] == 'tejus':
+
+            app_pass = 'tejus'
+        elif request.form['inputUsername'] == 'rajaneesh':
+
+            app_pass = 'rajaneesh'
+        elif request.form['inputUsername'] == 'manju':
+
+            app_pass = 'manju'
+
+        else:
+            error = 'You have no access'
+            return render_template('login.html',title='Login to TextMe',page_title='TextMe',error=error)
+
+        if request.form['inputPassword'] != app_pass:
+            error = 'Invalid password - or - I have changed it :p, will let you know later'
+        else:
+
+            session['logged_in'] = True
+            session['username'] = request.form['inputUsername']
+            print("just before login")
+            return redirect(url_for('index'))
+    return render_template('login.html',
+                         title='Login to TextMe',
+                                                 page_title='TextMe',error=error)
+
+@app.route('/logout',methods=['GET', 'POST'])
+def logout():
+    session.pop('logged_in', None)
+    session.pop('prev',None)
+
+    flash('You were logged out')
+    return redirect(url_for('index'))
+
+
+if __name__ == '__main__':
+  #app.run()
+  socketio.run(app)
